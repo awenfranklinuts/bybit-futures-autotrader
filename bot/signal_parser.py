@@ -1,50 +1,45 @@
-import re
-import openai
+import os
+import json
+from dotenv import load_dotenv
+from openai import OpenAI
 
-def is_new_trade_signal(message: str) -> bool:
-    keywords = ["new position", "entry", "target", "stop loss"]
-    return all(kw in message.lower() for kw in keywords)
+# Load .env file
+load_dotenv(dotenv_path="config/.env")
+
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+SYSTEM_PROMPT = (
+    "You are a crypto futures trading assistant.\n"
+    "Your task is to read WhatsApp messages from a professional trader, and identify whether the message is one of the following modes:\n"
+    "1. 'open' - New futures trade signal.\n"
+    "2. 'adjust' - Modify an existing position (e.g., move SL to entry).\n"
+    "3. 'close' - Exit or close a position.\n"
+    "4. 'commentary' - Just a market update or message with no actionable trade.\n\n"
+    "If mode is 'open', extract the following fields if available: symbol, side, leverage, entry (can be range), targets (list), stop_loss, dca_point (if any), and risk_percent.\n"
+    "If mode is 'adjust' or 'close', extract relevant action and symbol.\n"
+    "Return a valid JSON object only."
+)
 
 def parse_signal(message: str) -> dict:
-    """
-    Parses a new trade signal from a message string.
-    Returns a dictionary with extracted values.
-    """
-    if not is_new_trade_signal(message):
-        return None
-
     try:
-        # Coin
-        coin_match = re.search(r"coin:\s*(\w+)", message, re.IGNORECASE)
-        coin = coin_match.group(1).upper() if coin_match else None
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": message}
+            ],
+            temperature=0.2
+        )
 
-        # Side + Leverage
-        side_lev = re.search(r"(long|short).*?(\d+)\s*leverage", message, re.IGNORECASE)
-        side = side_lev.group(1).capitalize() if side_lev else None
-        leverage = int(side_lev.group(2)) if side_lev else None
+        reply = response.choices[0].message.content.strip()
+        parsed = json.loads(reply)
+        return parsed
 
-        # Entry range
-        entry_match = re.search(r"entry:\s*([\d.]+)\s*-\s*([\d.]+)", message, re.IGNORECASE)
-        entry_from, entry_to = entry_match.groups() if entry_match else (None, None)
-        entry_avg = round((float(entry_from) + float(entry_to)) / 2, 6) if entry_from and entry_to else None
-
-        # Targets
-        targets = re.findall(r"Target \d:\s*([\d.]+)", message)
-        take_profit = float(targets[0]) if targets else None  # Use TP1
-
-        # Stop Loss
-        sl_match = re.search(r"stop loss.*?(above|below)?\s*([\d.]+)", message, re.IGNORECASE)
-        stop_loss = float(sl_match.group(2)) if sl_match else None
-
-        return {
-            "coin": coin,
-            "side": side,
-            "leverage": leverage,
-            "entry": entry_avg,
-            "take_profit": take_profit,
-            "stop_loss": stop_loss
-        }
+    except json.JSONDecodeError:
+        print("⚠️ Failed to parse GPT response as JSON:", reply)
+        return {"mode": "commentary", "note": "GPT response could not be parsed"}
 
     except Exception as e:
-        print("Failed to parse:", e)
-        return None
+        print("❌ Error during signal parsing:", e)
+        return {"mode": "commentary", "note": str(e)}
