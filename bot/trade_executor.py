@@ -75,7 +75,8 @@ def place_order(
     qty: float,
     leverage: int = 10,
     take_profit: float = None,
-    stop_loss: float = None
+    stop_loss: float = None,
+    price: float = None
 ):
     if qty <= 0:
         print("❌ Quantity too low. Aborting order.")
@@ -92,10 +93,12 @@ def place_order(
         ("orderType", order_type),
         ("qty", str(qty)),
         ("leverage", str(leverage)),
-        ("timeInForce", "GoodTillCancel"),
+        ("timeInForce", "GTC"),
         ("recvWindow", RECV_WINDOW)
     ])
 
+    if price and order_type.upper() == "LIMIT":
+        body["price"] = str(price)
     if take_profit:
         body["takeProfit"] = str(take_profit)
     if stop_loss:
